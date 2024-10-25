@@ -26,10 +26,13 @@ export const Register = async (req: Request, res: Response) => {
     console.log(""+process.env.BROKER+":"+process.env.BROKER_PORT);
 
     const value = JSON.stringify({
-        ...body,
-        email: email,
-        password: await bcryptjs.hash(password, 10),
-        is_ambassador: req.path === '/api/ambassador/register'
+        action: "create",
+        user: {
+            ...body,
+            email: email,
+            password: password,
+            is_ambassador: req.path === '/api/ambassador/register'
+        }
     });
 
     await producer.connect();
@@ -60,8 +63,23 @@ export const UpdatePassword = async (req: Request, res: Response) => {
         })
     }
 
-    await getRepository(User).update(user.id, {
-        password: await bcryptjs.hash(req.body.password, 10)
+    await getRepository(User).update(user.email, {
+        password: req.body.password,
+    });
+
+    const value = JSON.stringify({
+        action: "update_password",
+        user: {
+            id: user.firebase_id,
+            password: req.body.password,
+        }
+    });
+
+    await producer.connect();
+
+    await producer.send({
+        topic: "users",
+        messages: [{value}], 
     });
 
     res.send(user);
@@ -72,30 +90,36 @@ export const UpdateInfo = async (req: Request, res: Response) => {
 
     const repository = getRepository(User);
 
-    await repository.update(user.id, req.body);
+    await repository.update({
+        email: user.email
+    }, {
+        first_name: req.body.first_name,
+        last_name: req.body.last_name,
+    });
 
-    res.send(await repository.findOne(user.id));
+    const value = JSON.stringify({
+        action: "update_info",
+        user: {
+            id: user.id,
+            first_name: req.body.first_name,
+            last_name: req.body.last_name,
+        }
+    });
+
+    await producer.connect();
+
+    await producer.send({
+        topic: "users",
+        messages: [{value}], 
+    });
+
+    res.send(await repository.findOne({
+        email: user.email
+    }));
 }
 
 export const Ambassadors = async (req: Request, res: Response) => {
     res.send(await getRepository(User).find({
         is_ambassador: true
     }));
-}
-
-export const Rankings = async (req: Request, res: Response) => {
-    const result: string[] = await client.sendCommand(['ZREVRANGEBYSCORE', 'rankings', '+inf', '-inf', 'WITHSCORES']);
-    let name;
-
-    res.send(result.reduce((o, r) => {
-        if (isNaN(parseInt(r))) {
-            name = r;
-            return o;
-        } else {
-            return {
-                ...o,
-                [name]: parseInt(r)
-            };
-        }
-    }, {}));
 }
